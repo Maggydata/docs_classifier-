@@ -1,2 +1,4 @@
 data/
-ruth_env/
+ruth_venv/
+
+.DS_Store
