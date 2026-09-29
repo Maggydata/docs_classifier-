@@ -1,0 +1,5 @@
+huggingface_hub
+ipykernel
+pillow
+matplotlib
+pandas
