@@ -3,3 +3,4 @@ ipykernel
 pillow
 matplotlib
 pandas
+opencv-python
