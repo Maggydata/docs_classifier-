@@ -57,6 +57,11 @@ def save_dataset(df: pd.DataFrame, output_folder: Path = _OUTPUT_FOLDER, columns
     output_path = output_folder/"data_splits.csv"
     df.to_csv(output_path, index=False)
 
-
-    
+if __name__ == "__main__":
+    df = load_metadata()
+    df = split_dataset(df)
+    verify_dataset(df)
+    print(df["split"].value_counts(normalize=True).round(3))
+    print((pd.crosstab(df["label"], df["split"], normalize="columns")[["train", "val", "test"]] * 100).round(1))
+    save_dataset(df)
 
