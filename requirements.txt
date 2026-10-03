@@ -4,3 +4,4 @@ pillow
 matplotlib
 pandas
 opencv-python
+scikit-learn # add in dependancies

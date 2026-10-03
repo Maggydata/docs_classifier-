@@ -1,0 +1,10 @@
+LICENSE
+README.md
+pyproject.toml
+docs_classifier.egg-info/PKG-INFO
+docs_classifier.egg-info/SOURCES.txt
+docs_classifier.egg-info/dependency_links.txt
+docs_classifier.egg-info/requires.txt
+docs_classifier.egg-info/top_level.txt
+docs_classifier/etl/extract/__init__.py
+docs_classifier/etl/extract/dataset_extraction.py

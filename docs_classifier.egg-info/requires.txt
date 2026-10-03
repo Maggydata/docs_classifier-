@@ -1,0 +1,8 @@
+huggingface_hub
+pillow
+pandas
+
+[notebook]
+ipykernel
+matplotlib
+opencv-python
