@@ -64,4 +64,3 @@ if __name__ == "__main__":
     print(df["split"].value_counts(normalize=True).round(3))
     print((pd.crosstab(df["label"], df["split"], normalize="columns")[["train", "val", "test"]] * 100).round(1))
     save_dataset(df)
-

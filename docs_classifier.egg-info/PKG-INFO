@@ -6,6 +6,7 @@ License-File: LICENSE
 Requires-Dist: huggingface_hub
 Requires-Dist: pillow
 Requires-Dist: pandas
+Requires-Dist: pytesseract
 Provides-Extra: notebook
 Requires-Dist: ipykernel; extra == "notebook"
 Requires-Dist: matplotlib; extra == "notebook"

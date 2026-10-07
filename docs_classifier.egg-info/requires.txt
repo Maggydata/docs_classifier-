@@ -1,6 +1,7 @@
 huggingface_hub
 pillow
 pandas
+pytesseract
 
 [notebook]
 ipykernel
