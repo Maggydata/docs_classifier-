@@ -9,3 +9,5 @@ docs_classifier.egg-info/top_level.txt
 docs_classifier/etl/split.py
 docs_classifier/etl/extract/__init__.py
 docs_classifier/etl/extract/dataset_extraction.py
+docs_classifier/etl/transform/__init__.py
+docs_classifier/etl/transform/ocr.py

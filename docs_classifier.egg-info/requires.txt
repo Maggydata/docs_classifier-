@@ -2,6 +2,8 @@ huggingface_hub
 pillow
 pandas
 pytesseract
+tqdm
+pyarrow
 
 [notebook]
 ipykernel
