@@ -17,7 +17,8 @@ _OCR_PARQUET = "data/interim/ocr.parquet"
 _ROTATION_THRESHOLD = 74
 _ROTATIONS = (90, 180, 270)
 
-def run_tesseract(img : Image.Image, tesseract_lang: str = _TESSERACT_LANG, tesseract_config: str = _TESSERACT_CONFIG) -> dict[str, list]:
+def run_tesseract(img : Image.Image, tesseract_lang: str = _TESSERACT_LANG, 
+                  tesseract_config: str = _TESSERACT_CONFIG) -> dict[str, list]:
     
     """Run Tesseract on an image and return the raw output from `image_to_data`.
 
@@ -25,7 +26,7 @@ def run_tesseract(img : Image.Image, tesseract_lang: str = _TESSERACT_LANG, tess
     """
     
     data = pytesseract.image_to_data(
-        img,
+        img.copy(),
         lang = tesseract_lang,
         config = tesseract_config,
         output_type = pytesseract.Output.DICT
@@ -65,28 +66,12 @@ def parse_tesseract_output(raw: dict[str, list]) -> dict:
     return text_data
 
 
-
-# def ocr_image(img : Image.Image, tesseract_version: str,  
-#               tesseract_lang: str = _TESSERACT_LANG, 
-#               tesseract_config: str = _TESSERACT_CONFIG) -> dict:
-#     """Full OCR of an image: OCR at 0°, then the other orientations
-#     if the confidence is below the threshold (or no word was recognized)."""
-    
-#     raw = run_tesseract(img, tesseract_lang, tesseract_config)
-#     text_data = parse_tesseract_output(raw)
-#     text_data.update({
-#         "tesseract_version" : tesseract_version,
-#         "tesseract_lang" : tesseract_lang,
-#         "tesseract_config" : tesseract_config
-#     })
-    
-#     return text_data
-
 def ocr_image( img: Image.Image,
                 tesseract_version: str,
                 tesseract_lang: str = _TESSERACT_LANG,
                 tesseract_config: str = _TESSERACT_CONFIG,
-                rotation_threshold: float = _ROTATION_THRESHOLD) -> dict:
+                rotation_threshold: float = _ROTATION_THRESHOLD,
+                rotations : tuple[int, ...] = _ROTATIONS) -> dict:
     """Full OCR of an image: OCR at 0°, then the other orientations
     if the confidence is below the threshold (or no word was recognized)."""
 
@@ -94,12 +79,14 @@ def ocr_image( img: Image.Image,
     result = parse_tesseract_output(raw)
 
     if needs_rotation(result["mean_confidence"], rotation_threshold):
-        result = try_rotations(img, result, _ROTATIONS, tesseract_lang, tesseract_config)
+        result = try_rotations(img, result, rotations, tesseract_lang, tesseract_config)
     else:
         result["rotation"] = 0
 
     result.update(build_settings(tesseract_version, tesseract_lang, tesseract_config, rotation_threshold))
     return result
+
+
 
 def cache_path(doc_path: str | Path, cache_dir: Path = _ROOT_PATH/_OCR_CACHE_DIR) -> Path:
     """The JSON path of a document.
@@ -109,9 +96,11 @@ def cache_path(doc_path: str | Path, cache_dir: Path = _ROOT_PATH/_OCR_CACHE_DIR
     """
     return cache_dir / Path(doc_path).with_suffix(".json")
 
+
 def needs_rotation(mean_confidence: float | None, threshold: float = _ROTATION_THRESHOLD) -> bool:
     """True if the confidence is below the threshold or missing (no word recognized)."""
     return mean_confidence is None or mean_confidence < threshold
+
 
 def pick_best(results: list[dict]) -> dict:
     """Return the result with the highest mean confidence.
@@ -123,9 +112,13 @@ def pick_best(results: list[dict]) -> dict:
         raise ValueError("pick_best needs at least one result")
     return max(results, key=lambda r: -1 if r["mean_confidence"] is None else r["mean_confidence"])
 
+
+
 def is_up_to_date(cached: dict, settings: dict) -> bool:
     """True if the cached JSON contains exactly the current settings."""
     return all(cached.get(key) == value for key, value in settings.items())
+
+
 
 def try_rotations( img: Image.Image,
                     result_0: dict,
@@ -149,6 +142,8 @@ def try_rotations( img: Image.Image,
 
     return pick_best(results)
 
+
+
 def build_settings( tesseract_version: str,
                     tesseract_lang: str = _TESSERACT_LANG,
                     tesseract_config: str = _TESSERACT_CONFIG,
@@ -160,6 +155,17 @@ def build_settings( tesseract_version: str,
         "tesseract_config": tesseract_config,
         "rotation_threshold": rotation_threshold,
     }
+ 
+ 
+    
+def read_cache(doc_path : str | Path, cache_dir : Path = _ROOT_PATH/_OCR_CACHE_DIR) -> dict | None:
+    """Read the cached JSON of a document, or return None if it does not exist."""
+    path = cache_path(doc_path, cache_dir)
+    if not path.exists():
+        return None
+    with open(path, encoding = "utf-8") as f :
+        return json.load(f)
+
 
 
 def write_cache(doc_path: str | Path, text_data : dict, cache_dir: Path = _ROOT_PATH/_OCR_CACHE_DIR) -> None:
@@ -174,52 +180,64 @@ def write_cache(doc_path: str | Path, text_data : dict, cache_dir: Path = _ROOT_
     tmp.replace(path)
     
 
+
 def run_ocr(split_csv : Path = _ROOT_PATH/_SPLIT_CSV, limit: int | None = None, 
             cache_dir : Path = _ROOT_PATH/_OCR_CACHE_DIR, images_dir : Path = _ROOT_PATH/_IMAGES_DIR,
-            tesseract_lang: str = _TESSERACT_LANG, tesseract_config: str = _TESSERACT_CONFIG, )-> dict :
+            tesseract_lang: str = _TESSERACT_LANG, tesseract_config: str = _TESSERACT_CONFIG, 
+            rotation_threshold: float = _ROTATION_THRESHOLD, rotations : tuple[int, ...] = _ROTATIONS)-> dict :
     
-    """Runs OCR on all documents in the split CSV file.
+    """Run OCR on all documents in the split CSV, using the cache.
 
-    Documents already in the cache are skipped. An error on a document
-    is reported without stopping the processing of the others.
-    `limit` allows you to process only the first n documents (for testing).
+    For each document:
+    - no JSON, or old JSON below the threshold: full OCR with ocr_image;
+    - up-to-date JSON: skipped;
+    - old JSON above the threshold: only rotation = 0 and the current
+      settings are added, without opening the image.
+    An error on a document is reported without stopping the others.
     """
     tesseract_version = str(pytesseract.get_tesseract_version())
+    settings = build_settings(tesseract_version, tesseract_lang, tesseract_config, rotation_threshold)
+    
     df = pd.read_csv(split_csv)
     if limit is not None:
         df = df.head(limit)
         
-    n_done, n_skipped = 0,0
+    counts = {"ocr": 0, "skipped": 0, "updated": 0}
     errors = []
     
     for _, line in tqdm(df.iterrows(), total = len(df), desc = "OCR"):
-        
         doc_path = line["path"]
-        doc_output_path = cache_path(doc_path, cache_dir)
-        
-        if doc_output_path.exists() : 
-            n_skipped += 1
-            continue
         
         try :
+            
+            cached = read_cache(doc_path, cache_dir)
+            
+            if cached is not None and is_up_to_date(cached, settings):
+                counts["skipped"] += 1
+                continue
+            
+            if cached is not None and not needs_rotation(cached.get("mean_confidence"), rotation_threshold) :
+                cached.update({"rotation" : 0, **settings})
+                write_cache(doc_path, cached, cache_dir)
+                counts["updated"] += 1
+                continue
+            
             with Image.open(images_dir/doc_path) as img :
-                text_data = ocr_image(img, tesseract_version, tesseract_lang, tesseract_config) 
+                text_data = ocr_image(img, tesseract_version, tesseract_lang, tesseract_config, rotation_threshold, rotations) 
             
-            text_data.update({
-                "path" : doc_path
-            })
-            
+            text_data["path"] = doc_path
             write_cache(doc_path, text_data, cache_dir)
-            n_done += 1
+            counts["ocr"] += 1
             
         except Exception as e :
             errors.append({"path" : doc_path, "error" : f"{type(e).__name__} : {e}"})
     
-    print(f"processed : {n_done} | already in cache : {n_skipped} | Errors : {len(errors)}")
+    print(f"processed : {counts["ocr"]} | updated without OCR : {counts["updated"]}"
+          f" | Already up to date : {counts["skipped"]} | Errors : {len(errors)}")
     for err in errors:
         print(f"  ✗ {err['path']} — {err['error']}")            
                  
-    return {"done": n_done, "skipped": n_skipped, "errors": errors}  
+    return {**counts, "errors" : errors}  
     
 
 def consolidate_ocr(split_csv: Path = _ROOT_PATH/_SPLIT_CSV, cache_dir : Path = _ROOT_PATH/_OCR_CACHE_DIR, output: Path = _ROOT_PATH/_OCR_PARQUET) -> pd.DataFrame:
@@ -249,57 +267,58 @@ def consolidate_ocr(split_csv: Path = _ROOT_PATH/_SPLIT_CSV, cache_dir : Path = 
 
     return df
 
-def _smoke_test() -> None:
-    """Quick checks: pure functions, then ocr_image on 3 known documents."""
+# def _smoke_test() -> None:
+#     """Quick checks: pure functions, then ocr_image on 3 known documents."""
 
-    # 1. Fonctions pures (pas d'image, pas de Tesseract)
-    assert needs_rotation(None) is True
-    assert needs_rotation(50) is True
-    assert needs_rotation(74) is False
-    assert pick_best([{"rotation": 0, "mean_confidence": 60},
-                      {"rotation": 90, "mean_confidence": 85}])["rotation"] == 90
-    assert pick_best([{"rotation": 0, "mean_confidence": 60},
-                      {"rotation": 90, "mean_confidence": 60}])["rotation"] == 0
-    settings = build_settings("5.5.0")
-    assert is_up_to_date({**settings, "text": "..."}, settings) is True
-    assert is_up_to_date({"tesseract_version": "5.5.0"}, settings) is False
-    print("Fonctions pures : OK")
+#     # 1. Fonctions pures (pas d'image, pas de Tesseract)
+#     assert needs_rotation(None) is True
+#     assert needs_rotation(50) is True
+#     assert needs_rotation(74) is False
+#     assert pick_best([{"rotation": 0, "mean_confidence": 60},
+#                       {"rotation": 90, "mean_confidence": 85}])["rotation"] == 90
+#     assert pick_best([{"rotation": 0, "mean_confidence": 60},
+#                       {"rotation": 90, "mean_confidence": 60}])["rotation"] == 0
+#     settings = build_settings("5.5.0")
+#     assert is_up_to_date({**settings, "text": "..."}, settings) is True
+#     assert is_up_to_date({"tesseract_version": "5.5.0"}, settings) is False
+#     print("Fonctions pures : OK")
 
-    # 2. ocr_image sur deux pages tournées et une page droite
-    version = str(pytesseract.get_tesseract_version())
-    images_dir = _ROOT_PATH / _IMAGES_DIR
+#     # 2. ocr_image sur deux pages tournées et une page droite
+#     version = str(pytesseract.get_tesseract_version())
+#     images_dir = _ROOT_PATH / _IMAGES_DIR
 
-    for doc in ["test/2030119286.jpg", "train/2072281108.jpg", "train/87150355.jpg"]:
-        with Image.open(images_dir / doc) as img:
-            res = ocr_image(img, version)
-        conf = res["mean_confidence"]
-        conf_txt = f"{conf:.1f}" if conf is not None else "aucun mot"
-        print(f"{doc:<25} rotation {res['rotation']:>3}° | confiance {conf_txt} | {res['nb_words']} mots")
-        print("   ", res["text"][:150].replace("\n", " "))
+#     for doc in ["test/2030119286.jpg", "train/2072281108.jpg", "train/87150355.jpg"]:
+#         with Image.open(images_dir / doc) as img:
+#             res = ocr_image(img, version)
+#         conf = res["mean_confidence"]
+#         conf_txt = f"{conf:.1f}" if conf is not None else "aucun mot"
+#         print(f"{doc:<25} rotation {res['rotation']:>3}° | confiance {conf_txt} | {res['nb_words']} mots")
+#         print("   ", res["text"][:150].replace("\n", " "))
     
-    # 3. Diagnostic : confiance à chaque orientation
-    print("\nDiagnostic des orientations :")
-    print("_ROTATIONS =", _ROTATIONS, "| seuil =", _ROTATION_THRESHOLD)
-    for doc in ["test/2030119286.jpg", "train/2072281108.jpg"]:
-        with Image.open(images_dir / doc) as img:
-            result_0 = parse_tesseract_output(run_tesseract(img))
-            print(f"{doc}  needs_rotation = {needs_rotation(result_0['mean_confidence'])}")
-            for angle in (0, *_ROTATIONS):
-                r = parse_tesseract_output(run_tesseract(img.rotate(angle, expand=True)))
-                print(f"   {angle:>3}° : confiance {r['mean_confidence']}, {r['nb_words']} mots")
-            best = try_rotations(img, result_0)
-            print(f"   → try_rotations choisit {best['rotation']}°")    
+#     # 3. Diagnostic : confiance à chaque orientation
+#     print("\nDiagnostic des orientations :")
+#     print("_ROTATIONS =", _ROTATIONS, "| seuil =", _ROTATION_THRESHOLD)
+#     for doc in ["test/2030119286.jpg", "train/2072281108.jpg"]:
+#         with Image.open(images_dir / doc) as img:
+#             result_0 = parse_tesseract_output(run_tesseract(img))
+#             print(f"{doc}  needs_rotation = {needs_rotation(result_0['mean_confidence'])}")
+#             for angle in (0, *_ROTATIONS):
+#                 r = parse_tesseract_output(run_tesseract(img.rotate(angle, expand=True)))
+#                 print(f"   {angle:>3}° : confiance {r['mean_confidence']}, {r['nb_words']} mots")
+#             best = try_rotations(img, result_0)
+#             print(f"   → try_rotations choisit {best['rotation']}°")    
     
-    print("\nTest OSD :")
-    with Image.open(_ROOT_PATH / _IMAGES_DIR / "test/2030119286.jpg") as img:
-        try:
-            osd = pytesseract.image_to_osd(img, output_type=pytesseract.Output.DICT)
-            print(f"OSD : rotate {osd['rotate']}° | confiance {osd['orientation_conf']:.2f}")
-        except pytesseract.TesseractError as e:
-            print("OSD impossible :", e)
-    print("Clés du résultat :", sorted(res.keys()))
+#     print("\nTest OSD :")
+#     with Image.open(_ROOT_PATH / _IMAGES_DIR / "test/2030119286.jpg") as img:
+#         try:
+#             osd = pytesseract.image_to_osd(img, output_type=pytesseract.Output.DICT)
+#             print(f"OSD : rotate {osd['rotate']}° | confiance {osd['orientation_conf']:.2f}")
+#         except pytesseract.TesseractError as e:
+#             print("OSD impossible :", e)
+#     print("Clés du résultat :", sorted(res.keys()))
 
 if __name__ == "__main__":
-    #run_ocr()
-    #consolidate_ocr()
-    _smoke_test()
+    import os
+    os.environ["OMP_THREAD_LIMIT"] = "1"
+    run_ocr()
+    consolidate_ocr()
